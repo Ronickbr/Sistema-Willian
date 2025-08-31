@@ -311,9 +311,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 <!-- Botão para Criar Novo Usuário -->
                 <div class="d-flex justify-content-end mb-4">
-                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalUsuario">
-                        <i class="fas fa-user-plus me-2"></i>
-                        Novo Usuário
+                    <button type="button" class="modern-btn" data-bs-toggle="modal" data-bs-target="#modalUsuario">
+                        <i class="fas fa-user-plus"></i> Novo Usuário
                     </button>
                 </div>
                 
@@ -333,14 +332,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                         <?php else: ?>
                             <div class="table-responsive">
-                                <table class="table table-hover">
+                                <table class="table modern-table">
                                     <thead>
                                         <tr>
                                             <th>Nome</th>
                                             <th>Email</th>
                                             <th>Tipo</th>
                                             <th>Data de Criação</th>
-                                            <th class="text-center">Ações</th>
+                                            <th>Ações</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -351,7 +350,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                         <div class="user-avatar-small me-2">
                                                             <i class="fas fa-user"></i>
                                                         </div>
-                                                        <?php echo htmlspecialchars($usuario['nome']); ?>
+                                                        <strong><?php echo htmlspecialchars($usuario['nome']); ?></strong>
                                                     </div>
                                                 </td>
                                                 <td><?php echo htmlspecialchars($usuario['email']); ?></td>
@@ -361,16 +360,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                     </span>
                                                 </td>
                                                 <td><?php echo date('d/m/Y H:i', strtotime($usuario['created_at'])); ?></td>
-                                                <td class="text-center">
-                                                    <button type="button" class="btn btn-sm btn-outline-primary me-1" 
-                                                            onclick="editarUsuario(<?php echo $usuario['id']; ?>)" 
-                                                            title="Editar">
+                                                <td>
+                                                    <button class="btn-modern-sm btn-primary" title="Editar" 
+                                                            onclick="editarUsuario(<?php echo $usuario['id']; ?>)">
                                                         <i class="fas fa-edit"></i>
                                                     </button>
                                                     <?php if ($usuario['id'] != $_SESSION['user_id']): ?>
-                                                        <button type="button" class="btn btn-sm btn-outline-danger" 
-                                                                onclick="deletarUsuario(<?php echo $usuario['id']; ?>)" 
-                                                                title="Excluir">
+                                                        <button class="btn-modern-sm btn-danger" title="Excluir" 
+                                                                onclick="deletarUsuario(<?php echo $usuario['id']; ?>)">
                                                             <i class="fas fa-trash"></i>
                                                         </button>
                                                     <?php endif; ?>
