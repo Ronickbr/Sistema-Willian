@@ -115,9 +115,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             
             $success_message = "Cotação realizada com sucesso!";
         }
+        
+        // Redirecionar para evitar reenvio do formulário e fechar o modal
+        header('Location: cotacoes.php?success=' . urlencode($success_message));
+        exit();
     } catch (Exception $e) {
         $error_message = "Erro ao processar cotação: " . $e->getMessage();
     }
+}
+
+// Verificar se há mensagem de sucesso na URL
+if (isset($_GET['success'])) {
+    $success_message = $_GET['success'];
 }
 
 // Processar atualização de status da cotação
@@ -149,6 +158,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
+// Processar exclusão de cotação
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'deletar_cotacao') {
+    header('Content-Type: application/json');
+    
+    try {
+        $pdo = getDBConnection();
+        $cotacao_id = $_POST['cotacao_id'];
+        
+        // Verificar se a cotação existe
+        $stmt_check = $pdo->prepare("SELECT id FROM cotacoes WHERE id = ?");
+        $stmt_check->execute([$cotacao_id]);
+        
+        if (!$stmt_check->fetch()) {
+            throw new Exception('Cotação não encontrada');
+        }
+        
+        // Deletar a cotação
+        $stmt = $pdo->prepare("DELETE FROM cotacoes WHERE id = ?");
+        $stmt->execute([$cotacao_id]);
+        
+        if ($stmt->rowCount() > 0) {
+            echo json_encode(['success' => true, 'message' => 'Cotação deletada com sucesso']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Erro ao deletar cotação']);
+        }
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
 // Buscar cotações existentes
 try {
     $pdo = getDBConnection();
@@ -162,19 +202,24 @@ try {
     $cotacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
     $cotacoes = [];
+
     error_log("Erro ao buscar cotações: " . $e->getMessage());
 }
+
+
 
 // Buscar pedidos para o formulário
 try {
     $pdo = getDBConnection();
     $stmt = $pdo->query("
-        SELECT p.id, p.numero_pedido, p.numero_picking,
+        SELECT p.id, p.numero_pedido, p.numero_picking, p.cliente_nome, p.origem, p.destino, 
+               p.peso, p.valor_mercadoria, p.observacoes, p.data_pedido, p.status, p.descricao,
                COALESCE(SUM(m.cubagem_m3), 0) as cubagem_total,
-               COALESCE(SUM(m.quantidade_volumes * (m.comprimento * m.altura * m.largura) / 1000000 * 300), 0) as peso
+               COALESCE(SUM(m.quantidade_volumes * (m.comprimento * m.altura * m.largura) / 1000000 * 300), 0) as peso_calculado
         FROM pedidos p 
         LEFT JOIN medidas m ON p.id = m.pedido_id 
-        GROUP BY p.id, p.numero_pedido, p.numero_picking
+        GROUP BY p.id, p.numero_pedido, p.numero_picking, p.cliente_nome, p.origem, p.destino, 
+                 p.peso, p.valor_mercadoria, p.observacoes, p.data_pedido, p.status, p.descricao
         ORDER BY p.numero_pedido
     ");
     $pedidos_result = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -183,12 +228,15 @@ try {
     error_log("Pedidos encontrados: " . count($pedidos_result));
     error_log("Dados dos pedidos: " . json_encode($pedidos_result));
     
-    // Adicionar campos padrão para compatibilidade
+    // Processar dados dos pedidos
     $pedidos = [];
     foreach ($pedidos_result as $pedido) {
-        $pedido['cliente'] = 'Cliente não informado';
-        $pedido['origem'] = 'Origem não informada';
-        $pedido['destino'] = 'Destino não informado';
+        // Usar dados reais ou valores padrão se estiverem vazios
+        $pedido['cliente_nome'] = $pedido['cliente_nome'] ?: 'Cliente não informado';
+        $pedido['origem'] = $pedido['origem'] ?: 'Origem não informada';
+        $pedido['destino'] = $pedido['destino'] ?: 'Destino não informado';
+        // Usar peso do pedido se disponível, senão usar peso calculado
+        $pedido['peso_final'] = $pedido['peso'] ?: $pedido['peso_calculado'];
         $pedidos[] = $pedido;
     }
 } catch (Exception $e) {
@@ -438,6 +486,13 @@ try {
                                                             <i class="fas fa-times"></i>
                                                         </button>
                                                     <?php endif; ?>
+                                                    
+                                                    <!-- Botão de deletar sempre visível -->
+                                                    <button class="modern-btn-sm warning" title="Deletar" 
+                                                            onclick="return deletarCotacao(<?php echo $cotacao['id']; ?>)" 
+                                                            data-id="<?php echo $cotacao['id']; ?>">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -480,12 +535,13 @@ try {
                                         <option value="<?php echo $pedido['id']; ?>" 
                                                 data-numero="<?php echo htmlspecialchars($pedido['numero_pedido'] ?? ''); ?>"
                                                 data-picking="<?php echo htmlspecialchars($pedido['numero_picking'] ?? ''); ?>"
-                                                data-cliente="<?php echo htmlspecialchars($pedido['cliente'] ?? ''); ?>"
+                                                data-cliente="<?php echo htmlspecialchars($pedido['cliente_nome'] ?? ''); ?>"
                                                 data-origem="<?php echo htmlspecialchars($pedido['origem'] ?? ''); ?>"
                                                 data-destino="<?php echo htmlspecialchars($pedido['destino'] ?? ''); ?>"
-                                                data-peso="<?php echo $pedido['peso'] ?? 0; ?>"
-                                                data-cubagem="<?php echo $pedido['cubagem_total'] ?? 0; ?>">
-                                            <?php echo htmlspecialchars(($pedido['numero_pedido'] ?? '') . ' - ' . ($pedido['cliente'] ?? '')); ?>
+                                                data-peso="<?php echo $pedido['peso_final'] ?? 0; ?>"
+                                                data-cubagem="<?php echo $pedido['cubagem_total'] ?? 0; ?>"
+                                                data-valor-mercadoria="<?php echo $pedido['valor_mercadoria'] ?? 0; ?>">
+                                            <?php echo htmlspecialchars(($pedido['numero_pedido'] ?? '') . ' - ' . ($pedido['cliente_nome'] ?? '')); ?>
                                             <?php if (!empty($pedido['numero_picking'])): ?>
                                                 (Picking: <?php echo htmlspecialchars($pedido['numero_picking']); ?>)
                                             <?php endif; ?>
@@ -647,7 +703,7 @@ try {
     
     // Função para exibir informações do pedido
     function exibirInformacoesPedido(data) {
-        document.getElementById('info_cliente').textContent = data.pedido.cliente;
+        document.getElementById('info_cliente').textContent = data.pedido.cliente_nome;
         document.getElementById('info_rota').textContent = data.resumo.rota;
         document.getElementById('info_peso').textContent = data.resumo.peso_total;
         document.getElementById('info_medidas').textContent = data.resumo.total_medidas + ' item(s)';
@@ -705,13 +761,13 @@ try {
         });
         
         const cubagem = dadosPedidoAtual.pedido.cubagem_total_m3 || 0;
-        const pesoTotal = Math.max(pesoNotaFiscal, dadosPedidoAtual.pedido.peso || 0);
+        const pesoTotal = Math.max(pesoNotaFiscal, dadosPedidoAtual.pedido.peso_final || 0);
         
         console.log('Dados para cálculo:', {
             cubagem,
             pesoTotal,
             pesoNota: pesoNotaFiscal,
-            pesoPedido: dadosPedidoAtual.pedido.peso
+            pesoPedido: dadosPedidoAtual.pedido.peso_final
         });
         
         // Cálculo do frete baseado na tabela da transportadora
@@ -935,6 +991,23 @@ try {
     document.addEventListener('DOMContentLoaded', function() {
         const urlParams = new URLSearchParams(window.location.search);
         const pedidoId = urlParams.get('pedido_id');
+        const successMessage = urlParams.get('success');
+        
+        // Se há mensagem de sucesso, fechar qualquer modal aberto
+        if (successMessage) {
+            // Fechar todos os modais abertos
+            const modals = document.querySelectorAll('.modal.show');
+            modals.forEach(modal => {
+                const modalInstance = bootstrap.Modal.getInstance(modal);
+                if (modalInstance) {
+                    modalInstance.hide();
+                }
+            });
+            
+            // Limpar a URL removendo o parâmetro success
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, document.title, newUrl);
+        }
         
         if (pedidoId) {
             // Abrir modal automaticamente
@@ -1032,6 +1105,67 @@ try {
     function rejeitarCotacao(cotacaoId) {
         if (confirm('Tem certeza que deseja rejeitar esta cotação?')) {
             atualizarStatusCotacao(cotacaoId, 'rejeitada');
+            return true;
+        }
+        return false;
+    }
+    
+    // Função para deletar cotação
+    function deletarCotacao(cotacaoId) {
+        if (confirm('Tem certeza que deseja deletar esta cotação? Esta ação não pode ser desfeita.')) {
+            // Mostrar loading
+            const button = document.querySelector(`[onclick="return deletarCotacao(${cotacaoId})"]`);
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            }
+            
+            const formData = new FormData();
+            formData.append('action', 'deletar_cotacao');
+            formData.append('cotacao_id', cotacaoId);
+            
+            fetch('cotacoes.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Criar alerta de sucesso
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-success alert-dismissible fade show';
+                    alertDiv.innerHTML = `
+                        <i class="fas fa-check-circle"></i> ${data.message}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    `;
+                    
+                    // Inserir alerta no topo da página
+                    const container = document.querySelector('.container-fluid');
+                    container.insertBefore(alertDiv, container.firstChild);
+                    
+                    // Recarregar a página após 1 segundo
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                } else {
+                    alert('Erro: ' + data.message);
+                    // Restaurar botão
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = '<i class="fas fa-trash"></i>';
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Erro:', error);
+                alert('Erro ao deletar cotação');
+                // Restaurar botão
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="fas fa-trash"></i>';
+                }
+            });
+            
             return true;
         }
         return false;

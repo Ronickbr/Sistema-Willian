@@ -128,6 +128,41 @@ if (isset($_POST['action']) && $_POST['action'] === 'editar') {
     }
 }
 
+// Processar exclusão de transportadora
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'deletar_transportadora') {
+    try {
+        $pdo = getDBConnection();
+        $transportadora_id = $_POST['transportadora_id'];
+        
+        // Verificar se a transportadora existe
+        $stmt = $pdo->prepare("SELECT id FROM transportadoras WHERE id = ?");
+        $stmt->execute([$transportadora_id]);
+        
+        if ($stmt->rowCount() > 0) {
+            $pdo->beginTransaction();
+            
+            // Deletar cotações relacionadas
+            $stmt = $pdo->prepare("DELETE FROM cotacoes WHERE transportadora_id = ?");
+            $stmt->execute([$transportadora_id]);
+            
+            // Deletar a transportadora
+            $stmt = $pdo->prepare("DELETE FROM transportadoras WHERE id = ?");
+            $stmt->execute([$transportadora_id]);
+            
+            $pdo->commit();
+            echo json_encode(['success' => true, 'message' => 'Transportadora deletada com sucesso!']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Transportadora não encontrada!']);
+        }
+    } catch (Exception $e) {
+        if (isset($pdo)) {
+            $pdo->rollBack();
+        }
+        echo json_encode(['success' => false, 'message' => 'Erro ao deletar transportadora: ' . $e->getMessage()]);
+    }
+    exit();
+}
+
 // Buscar transportadoras existentes
 try {
     $pdo = getDBConnection();
@@ -313,6 +348,9 @@ try {
                                                             <i class="fas <?php echo $transportadora['ativo'] ? 'fa-times' : 'fa-check'; ?>"></i>
                                                         </button>
                                                     </form>
+                                                    <button class="modern-btn-sm warning" title="Deletar" onclick="deletarTransportadora(<?php echo $transportadora['id']; ?>)">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -650,6 +688,41 @@ try {
                 console.error('Erro:', error);
                 alert('Erro ao carregar dados da transportadora');
             });
+    }
+    
+    // Função para deletar transportadora
+    function deletarTransportadora(transportadoraId) {
+        if (confirm('Tem certeza que deseja deletar esta transportadora? Esta ação não pode ser desfeita e irá remover todas as cotações relacionadas.')) {
+            const button = event.target.closest('button');
+            const originalContent = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            button.disabled = true;
+            
+            fetch('transportadoras.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'action=deletar_transportadora&transportadora_id=' + transportadoraId
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Transportadora deletada com sucesso!');
+                    location.reload();
+                } else {
+                    alert('Erro ao deletar transportadora: ' + data.message);
+                    button.innerHTML = originalContent;
+                    button.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Erro:', error);
+                alert('Erro ao deletar transportadora.');
+                button.innerHTML = originalContent;
+                button.disabled = false;
+            });
+        }
     }
     </script>
     

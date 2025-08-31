@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Atualizar pedido
         $stmt = $pdo->prepare("
             UPDATE pedidos SET 
-                numero_pedido = ?, numero_picking = ?, cliente = ?, origem = ?, destino = ?, 
+                numero_pedido = ?, numero_picking = ?, cliente_nome = ?, origem = ?, destino = ?, 
                 peso = ?, valor_mercadoria = ?, observacoes = ?
             WHERE id = ?
         ");
@@ -61,8 +61,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Inserir novas medidas
         if (isset($_POST['medidas']) && is_array($_POST['medidas'])) {
             $stmt_medida = $pdo->prepare("
-                INSERT INTO medidas (pedido_id, comprimento, altura, largura, quantidade_volumes, cubagem_m3) 
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO medidas (pedido_id, comprimento, altura, largura, quantidade_volumes) 
+                VALUES (?, ?, ?, ?, ?)
             ");
             
             foreach ($_POST['medidas'] as $medida) {
@@ -72,15 +72,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $largura = floatval($medida['largura'] ?? 0);
                     $volumes = intval($medida['quantidade_volumes'] ?? 0);
                     
-                    $cubagem_m3 = ($comprimento * $altura * $largura * $volumes) / 1000000;
-                    
                     $stmt_medida->execute([
                         $pedido_id,
                         $comprimento,
                         $altura,
                         $largura,
-                        $volumes,
-                        $cubagem_m3
+                        $volumes
                     ]);
                 }
             }
@@ -102,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         
         // Inserir pedido
         $stmt = $pdo->prepare("
-            INSERT INTO pedidos (numero_pedido, numero_picking, cliente, origem, destino, peso, valor_mercadoria, observacoes, status, created_at) 
+            INSERT INTO pedidos (numero_pedido, numero_picking, cliente_nome, origem, destino, peso, valor_mercadoria, observacoes, status, created_at) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente', NOW())
         ");
         
@@ -122,8 +119,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Inserir medidas se existirem
         if (isset($_POST['medidas']) && is_array($_POST['medidas'])) {
             $stmt_medida = $pdo->prepare("
-                INSERT INTO medidas (pedido_id, comprimento, altura, largura, quantidade_volumes, cubagem_m3) 
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO medidas (pedido_id, comprimento, altura, largura, quantidade_volumes) 
+                VALUES (?, ?, ?, ?, ?)
             ");
             
             foreach ($_POST['medidas'] as $medida) {
@@ -133,16 +130,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $largura = floatval($medida['largura'] ?? 0);
                     $volumes = intval($medida['quantidade_volumes'] ?? 0);
 
-                    // Calcular cubagem em m³ (convertendo de cm³ para m³)
-                    $cubagem_m3 = ($comprimento * $altura * $largura * $volumes) / 1000000;
-                    
                     $stmt_medida->execute([
                         $pedido_id,
                         $comprimento,
                         $altura,
                         $largura,
-                        $volumes,
-                        $cubagem_m3
+                        $volumes
                     ]);
                 }
             }
@@ -154,6 +147,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $pdo->rollBack();
         $error_message = "Erro ao cadastrar pedido: " . $e->getMessage();
     }
+}
+
+// Processar exclusão de pedido
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'deletar_pedido') {
+    try {
+        $pdo = getDBConnection();
+        $pedido_id = $_POST['pedido_id'];
+        
+        // Verificar se o pedido existe
+        $stmt = $pdo->prepare("SELECT id FROM pedidos WHERE id = ?");
+        $stmt->execute([$pedido_id]);
+        
+        if ($stmt->rowCount() > 0) {
+            $pdo->beginTransaction();
+            
+            // Deletar medidas relacionadas
+            $stmt = $pdo->prepare("DELETE FROM medidas WHERE pedido_id = ?");
+            $stmt->execute([$pedido_id]);
+            
+            // Deletar cotações relacionadas
+            $stmt = $pdo->prepare("DELETE FROM cotacoes WHERE pedido_id = ?");
+            $stmt->execute([$pedido_id]);
+            
+            // Deletar o pedido
+            $stmt = $pdo->prepare("DELETE FROM pedidos WHERE id = ?");
+            $stmt->execute([$pedido_id]);
+            
+            $pdo->commit();
+            echo json_encode(['success' => true, 'message' => 'Pedido deletado com sucesso!']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Pedido não encontrado!']);
+        }
+    } catch (Exception $e) {
+        if (isset($pdo)) {
+            $pdo->rollBack();
+        }
+        echo json_encode(['success' => false, 'message' => 'Erro ao deletar pedido: ' . $e->getMessage()]);
+    }
+    exit();
 }
 
 // Buscar pedidos existentes com medidas totais
@@ -260,7 +292,7 @@ try {
                                             <tr>
                                                 <td><strong><?php echo htmlspecialchars($pedido['numero_pedido']); ?></strong></td>
                                                 <td><?php echo htmlspecialchars(isset($pedido['numero_picking']) ? $pedido['numero_picking'] : '-'); ?></td>
-                                                <td><?php echo htmlspecialchars($pedido['cliente'] ?? ''); ?></td>
+                                                <td><?php echo htmlspecialchars($pedido['cliente_nome'] ?? ''); ?></td>
                                                 <td><?php echo htmlspecialchars($pedido['origem'] ?? ''); ?></td>
                                                 <td><?php echo htmlspecialchars($pedido['destino'] ?? ''); ?></td>
                                                 <td><?php echo number_format($pedido['peso'] ?? 0, 2, ',', '.'); ?></td>
@@ -296,6 +328,10 @@ try {
                                                     <button class="modern-btn-sm info" title="Cotar" 
                                                             onclick="cotarPedido(<?php echo $pedido['id']; ?>)">
                                                         <i class="fas fa-calculator"></i>
+                                                    </button>
+                                                    <button class="modern-btn-sm warning" title="Deletar" 
+                                                            onclick="deletarPedido(<?php echo $pedido['id']; ?>)">
+                                                        <i class="fas fa-trash"></i>
                                                     </button>
                                                 </td>
                                             </tr>
@@ -695,7 +731,7 @@ try {
                         document.getElementById('edit_pedido_id').value = data.pedido.id;
                         document.getElementById('edit_numero_pedido').value = data.pedido.numero_pedido || '';
                         document.getElementById('edit_numero_picking').value = data.pedido.numero_picking || '';
-                        document.getElementById('edit_cliente').value = data.pedido.cliente || '';
+                        document.getElementById('edit_cliente').value = data.pedido.cliente_nome || '';
                         document.getElementById('edit_origem').value = data.pedido.origem || '';
                         document.getElementById('edit_destino').value = data.pedido.destino || '';
                         document.getElementById('edit_peso').value = data.pedido.peso || '';
@@ -861,6 +897,41 @@ try {
         window.cotarPedido = function(pedidoId) {
             // Redirecionar para a página de cotações com o ID do pedido
             window.location.href = 'cotacoes.php?pedido_id=' + pedidoId;
+        };
+        
+        // Função para deletar pedido
+        window.deletarPedido = function(pedidoId) {
+            if (confirm('Tem certeza que deseja deletar este pedido? Esta ação não pode ser desfeita e irá remover todas as cotações e medidas relacionadas.')) {
+                const button = event.target.closest('button');
+                const originalContent = button.innerHTML;
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                button.disabled = true;
+                
+                fetch('pedidos.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=deletar_pedido&pedido_id=' + pedidoId
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Pedido deletado com sucesso!');
+                        location.reload();
+                    } else {
+                        alert('Erro ao deletar pedido: ' + data.message);
+                        button.innerHTML = originalContent;
+                        button.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Erro:', error);
+                    alert('Erro ao deletar pedido.');
+                    button.innerHTML = originalContent;
+                    button.disabled = false;
+                });
+            }
         };
     });
     </script>
