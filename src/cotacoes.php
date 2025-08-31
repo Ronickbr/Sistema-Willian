@@ -49,72 +49,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $valor_frete_calculado = converterValorParaDecimal($_POST['valor_frete_calculado']);
         $cubagem_total = converterValorParaDecimal($_POST['cubagem_total']);
         
-        // Verificar se já existe cotação para o mesmo pedido ou número de nota fiscal
-        $stmt_check = $pdo->prepare("
-            SELECT id FROM cotacoes 
-            WHERE pedido_id = ? OR numero_nota_fiscal = ?
+        // Inserir nova cotação (sempre criar uma nova, mesmo para o mesmo pedido)
+        $stmt = $pdo->prepare("
+            INSERT INTO cotacoes (
+                pedido_id, transportadora_id, numero_nota_fiscal, valor_nota_fiscal, 
+                peso_nota_fiscal, valor_frete, valor_frete_calculado, cubagem_total,
+                prazo_entrega, observacoes, status, data_cotacao
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', NOW())
         ");
-        $stmt_check->execute([$_POST['pedido_id'], $_POST['numero_nota_fiscal']]);
-        $cotacao_existente = $stmt_check->fetch();
         
-        if ($cotacao_existente) {
-            // Sobrescrever cotação existente
-            $stmt = $pdo->prepare("
-                UPDATE cotacoes SET 
-                    transportadora_id = ?, 
-                    numero_nota_fiscal = ?,
-                    valor_nota_fiscal = ?,
-                    peso_nota_fiscal = ?,
-                    valor_frete = ?, 
-                    valor_frete_calculado = ?,
-                    cubagem_total = ?,
-                    prazo_entrega = ?, 
-                    observacoes = ?, 
-                    status = 'pendente',
-                    data_cotacao = NOW()
-                WHERE pedido_id = ? OR numero_nota_fiscal = ?
-            ");
-            
-            $stmt->execute([
-                $_POST['transportadora_id'],
-                $_POST['numero_nota_fiscal'],
-                $valor_nota_fiscal,
-                $peso_nota_fiscal,
-                $valor_frete,
-                $valor_frete_calculado,
-                $cubagem_total,
-                $_POST['prazo_entrega'],
-                $_POST['observacoes'],
-                $_POST['pedido_id'],
-                $_POST['numero_nota_fiscal']
-            ]);
-            
-            $success_message = "Cotação atualizada com sucesso!";
-        } else {
-            // Inserir nova cotação
-            $stmt = $pdo->prepare("
-                INSERT INTO cotacoes (
-                    pedido_id, transportadora_id, numero_nota_fiscal, valor_nota_fiscal, 
-                    peso_nota_fiscal, valor_frete, valor_frete_calculado, cubagem_total,
-                    prazo_entrega, observacoes, status, data_cotacao
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', NOW())
-            ");
-            
-            $stmt->execute([
-                $_POST['pedido_id'],
-                $_POST['transportadora_id'],
-                $_POST['numero_nota_fiscal'],
-                $valor_nota_fiscal,
-                $peso_nota_fiscal,
-                $valor_frete,
-                $valor_frete_calculado,
-                $cubagem_total,
-                $_POST['prazo_entrega'],
-                $_POST['observacoes']
-            ]);
-            
-            $success_message = "Cotação realizada com sucesso!";
-        }
+        $stmt->execute([
+            $_POST['pedido_id'],
+            $_POST['transportadora_id'],
+            $_POST['numero_nota_fiscal'],
+            $valor_nota_fiscal,
+            $peso_nota_fiscal,
+            $valor_frete,
+            $valor_frete_calculado,
+            $cubagem_total,
+            $_POST['prazo_entrega'],
+            $_POST['observacoes']
+        ]);
+        
+        $success_message = "Cotação realizada com sucesso!";
         
         // Redirecionar para evitar reenvio do formulário e fechar o modal
         header('Location: cotacoes.php?success=' . urlencode($success_message));
@@ -202,8 +159,56 @@ try {
     $cotacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
     $cotacoes = [];
-
     error_log("Erro ao buscar cotações: " . $e->getMessage());
+}
+
+// Calcular estatísticas para os cards
+try {
+    $pdo = getDBConnection();
+    
+    // Cotações de hoje vs ontem
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM cotacoes WHERE DATE(data_cotacao) = CURDATE()");
+    $cotacoes_hoje = $stmt->fetch()['total'];
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM cotacoes WHERE DATE(data_cotacao) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)");
+    $cotacoes_ontem = $stmt->fetch()['total'];
+    
+    $variacao_hoje = $cotacoes_ontem > 0 ? round((($cotacoes_hoje - $cotacoes_ontem) / $cotacoes_ontem) * 100) : 0;
+    
+    // Cotações aprovadas esta semana vs semana passada
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM cotacoes WHERE status = 'aprovada' AND YEARWEEK(data_cotacao) = YEARWEEK(CURDATE())");
+    $aprovadas_semana = $stmt->fetch()['total'];
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM cotacoes WHERE status = 'aprovada' AND YEARWEEK(data_cotacao) = YEARWEEK(DATE_SUB(CURDATE(), INTERVAL 1 WEEK))");
+    $aprovadas_semana_passada = $stmt->fetch()['total'];
+    
+    $variacao_aprovadas = $aprovadas_semana_passada > 0 ? round((($aprovadas_semana - $aprovadas_semana_passada) / $aprovadas_semana_passada) * 100) : 0;
+    
+    // Cotações pendentes esta semana vs semana passada
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM cotacoes WHERE status = 'pendente' AND YEARWEEK(data_cotacao) = YEARWEEK(CURDATE())");
+    $pendentes_semana = $stmt->fetch()['total'];
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM cotacoes WHERE status = 'pendente' AND YEARWEEK(data_cotacao) = YEARWEEK(DATE_SUB(CURDATE(), INTERVAL 1 WEEK))");
+    $pendentes_semana_passada = $stmt->fetch()['total'];
+    
+    $variacao_pendentes = $pendentes_semana_passada > 0 ? round((($pendentes_semana - $pendentes_semana_passada) / $pendentes_semana_passada) * 100) : 0;
+    
+    // Valor médio este mês vs mês passado
+    $stmt = $pdo->query("SELECT AVG(valor_frete) as media FROM cotacoes WHERE YEAR(data_cotacao) = YEAR(CURDATE()) AND MONTH(data_cotacao) = MONTH(CURDATE())");
+    $valor_medio_mes = $stmt->fetch()['media'] ?: 0;
+    
+    $stmt = $pdo->query("SELECT AVG(valor_frete) as media FROM cotacoes WHERE YEAR(data_cotacao) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH)) AND MONTH(data_cotacao) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))");
+    $valor_medio_mes_passado = $stmt->fetch()['media'] ?: 0;
+    
+    $variacao_valor = $valor_medio_mes_passado > 0 ? round((($valor_medio_mes - $valor_medio_mes_passado) / $valor_medio_mes_passado) * 100) : 0;
+    
+} catch (Exception $e) {
+    $cotacoes_hoje = 0;
+    $variacao_hoje = 0;
+    $variacao_aprovadas = 0;
+    $variacao_pendentes = 0;
+    $variacao_valor = 0;
+    error_log("Erro ao calcular estatísticas: " . $e->getMessage());
 }
 
 
@@ -328,8 +333,8 @@ try {
                             </div>
                             <div class="metric-content">
                                 <div class="metric-label">Cotações Hoje</div>
-                                <div class="metric-value"><?php echo count(array_filter($cotacoes, function($c) { return date('Y-m-d', strtotime($c['data_cotacao'])) === date('Y-m-d'); })); ?></div>
-                                <div class="metric-change">+12% vs ontem</div>
+                                <div class="metric-value"><?php echo $cotacoes_hoje; ?></div>
+                                <div class="metric-change"><?php echo ($variacao_hoje >= 0 ? '+' : '') . $variacao_hoje; ?>% vs ontem</div>
                             </div>
                         </div>
                     </div>
@@ -342,7 +347,7 @@ try {
                             <div class="metric-content">
                                 <div class="metric-label">Cotações Aprovadas</div>
                                 <div class="metric-value"><?php echo count(array_filter($cotacoes, function($c) { return $c['status'] === 'aprovada'; })); ?></div>
-                                <div class="metric-change">+8% vs semana passada</div>
+                                <div class="metric-change"><?php echo ($variacao_aprovadas >= 0 ? '+' : '') . $variacao_aprovadas; ?>% vs semana passada</div>
                             </div>
                         </div>
                     </div>
@@ -355,7 +360,7 @@ try {
                             <div class="metric-content">
                                 <div class="metric-label">Cotações Pendentes</div>
                                 <div class="metric-value"><?php echo count(array_filter($cotacoes, function($c) { return $c['status'] === 'pendente'; })); ?></div>
-                                <div class="metric-change">-5% vs semana passada</div>
+                                <div class="metric-change"><?php echo ($variacao_pendentes >= 0 ? '+' : '') . $variacao_pendentes; ?>% vs semana passada</div>
                             </div>
                         </div>
                     </div>
@@ -368,12 +373,9 @@ try {
                             <div class="metric-content">
                                 <div class="metric-label">Valor Médio</div>
                                 <div class="metric-value">
-                                    R$ <?php 
-                                    $valores = array_column($cotacoes, 'valor_frete');
-                                    echo $valores ? number_format(array_sum($valores) / count($valores), 2, ',', '.') : '0,00';
-                                    ?>
+                                    R$ <?php echo number_format($valor_medio_mes, 2, ',', '.'); ?>
                                 </div>
-                                <div class="metric-change">+15% vs mês passado</div>
+                                <div class="metric-change"><?php echo ($variacao_valor >= 0 ? '+' : '') . $variacao_valor; ?>% vs mês passado</div>
                             </div>
                         </div>
                     </div>
